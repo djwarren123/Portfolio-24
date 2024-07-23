@@ -1,0 +1,569 @@
+---Every week I need to query a report with all our products and match the part numbers with the other remotes in different conditions.
+
+---First I need to add columns help match the products better since there is no column for these conditions.
+
+---I'll create a column for memory based on if the title mentions memory to help find the remotes more accurately
+
+alter table [HTL DATA 5].[dbo].[products_data_report_07-16-24]
+add Memory varchar(50);
+
+update [HTL DATA 5].[dbo].[products_data_report_07-16-24]
+set Memory = 
+	case
+		when Name like '%MEM1%' or Name like '%MEM-1%' or name like '%Driver-1%' or name like '%D1%'or name like '%Driver 1%' or name like '%M1%' then 'MEM1'
+		when Name like '%MEM2%' or Name like '%MEM-2%' or name like '%Driver-2%' or name like '%D2%'or name like '%Driver 2%' or name like '%M2%' then 'MEM2'
+		else 'NoMem'
+	end;
+
+---I'll also add a column for to help the pickers find the remotes quicker
+
+alter table [HTL DATA 5].[dbo].[products_data_report_07-16-24]
+add bluerocket_type varchar(50);
+
+update [HTL DATA 5].[dbo].[products_data_report_07-16-24]
+set bluerocket_type = 
+	case
+		when model like 'BRK-RH-%' then 'RH'
+		when model like 'BRK-FB-%' then 'FB'
+		when model like 'BRK-RM-%' then 'RM'
+		when model like 'BRK-RHK-%' then 'RHK'
+		when model like 'BRK-SK-%' then 'SK'
+	end;
+
+---Then I'll run queries for 2 different types of remote 'Brand New' and 'Aftermarket'
+
+---OEM
+
+SELECT
+    p.id as AKS_ID,
+	OEM.ID as OEM,
+    OEM.Quantity,
+    OEM.Stock_Location,
+	RFBA.ID as RFB_A,
+    RFBA.Quantity,
+    RFBA.Stock_Location,
+	RFBB.ID as RFB_B,
+    RFBB.Quantity,
+    RFBB.Stock_Location,
+	P.EZ
+FROM 
+    [HTL DATA 5].[dbo].[products_data_report_07-16-24] p
+LEFT JOIN
+    [HTL DATA 5].[dbo].[products_data_report_07-16-24] RFBB ON p.EZ = RFBB.EZ 
+    AND RFBB.Condition = 'RFB-B (Great)' 
+    AND RFBB.Satus = 1 
+    --AND RFBB.Model NOT LIKE '%PK' 
+    AND RFBB.Model LIKE '%RFB-B' 
+    AND p.Memory = RFBB.Memory 
+LEFT JOIN
+    [HTL DATA 5].[dbo].[products_data_report_07-16-24] RFBA ON p.EZ = RFBA.EZ 
+    AND RFBA.Condition = 'RFB-A (Mint)' 
+    AND RFBA.Satus = 1 
+    --AND RFBA.Model NOT LIKE '%PK' 
+    AND RFBA.Model LIKE '%RFB-A' 
+    AND p.Memory = RFBA.Memory    
+LEFT JOIN
+    [HTL DATA 5].[dbo].[products_data_report_07-16-24] OEM ON p.EZ = OEM.EZ 
+	and OEM.Condition = 'OEM New' 
+	--and OEM.Model not like '%PK' 
+	--and OEM.Model like '%OEM' 
+	and p.Memory = OEM.Memory
+WHERE 
+	p.id in (14177,14929,7232,etc.)
+ORDER BY
+	AKS_ID ASC;
+
+---Aftermarket
+
+SELECT
+    p.id as AKS_ID,
+    BRK.ID as BLUE_ROCKET,
+    BRK.Quantity,
+    BRK.Stock_Location,
+    RSH.ID as RE_SHELL,
+    RSH.Quantity,
+    RSH.Stock_Location,
+	P.EZ,
+	p.bluerocket_type
+FROM 
+    [HTL DATA 5].[dbo].[products_data_report_07-16-24] p
+LEFT JOIN
+    [HTL DATA 5].[dbo].[products_data_report_07-16-24] BRK ON p.EZ = BRK.EZ 
+    AND BRK.Condition = 'Aftermarket' 
+    AND BRK.Satus = 1 
+    AND BRK.Model NOT LIKE '%PK' 
+    AND BRK.Model LIKE 'BRK-%' 
+    AND p.Memory = BRK.Memory 
+LEFT JOIN
+    [HTL DATA 5].[dbo].[products_data_report_07-16-24] RSH ON p.EZ = RSH.EZ 
+    AND RSH.Condition = 'RFB-RS (NoLogo)' 
+    AND RSH.Satus = 1 
+    AND RSH.Model NOT LIKE '%PK' 
+    AND RSH.Model LIKE '%RFB-RS' 
+    AND p.Memory = RSH.Memory
+WHERE 
+	p.id in (2054,2836,4573,etc.)
+ORDER BY
+    AKS_ID ASC;
+
+---I'll have to query the product report for products with low profit margin and run price audits to help correct margin issues
+
+with cte as (
+SELECT
+	id,
+	satus as status,
+	Round(cost,2) as cost,
+	Round(price,2) as price,
+	Round(SUM(price - cost),2) AS total_profit,
+	Round(price - cost,2) as difference_,
+	Round(SUM(CASE WHEN price <> 0 THEN (price - cost) / price ELSE 0 END),2) AS profit_margin,
+	Round(cost * 1.25,2) as margin_25_perc
+FROM 
+	[products].[dbo].[products_data_report_02-21-24] 
+GROUP BY
+	ID,cost,price,satus
+)
+select
+	*
+from
+	cte
+where 
+	profit_margin < 0.25
+and
+	status = 1
+order by
+	profit_margin asc
+
+---I needed to separate the cross reference column since all the competitor skus are in there as a list (ILCO-465464, ILCO-ad1w9few9)
+
+UPDATE [products].[dbo].[products_data_report_03-05-24]
+SET Ilco_Look_Alike = 
+    CASE 
+        WHEN Cross_Reference LIKE 'ILCO-%' THEN 
+            SUBSTRING(Cross_Reference, CHARINDEX('ILCO-', Cross_Reference), CHARINDEX(' ', Cross_Reference + ' ', CHARINDEX('ILCO-', Cross_Reference) + LEN('ILCO-')) - CHARINDEX('ILCO-', Cross_Reference))
+        ELSE Ilco_Look_Alike
+    END;
+
+UPDATE [products].[dbo].[products_data_report_03-05-24]
+SET Key_Innovations = 
+    CASE 
+        WHEN Cross_Reference LIKE '%(keyi)%' THEN 
+            CASE 
+                WHEN CHARINDEX(',', Cross_Reference, CHARINDEX('(keyi)', Cross_Reference)) > 0 THEN 
+                    SUBSTRING(Cross_Reference, CHARINDEX(' ', Cross_Reference, CHARINDEX('(keyi)', Cross_Reference) - 1) + 1, CHARINDEX(',', Cross_Reference, CHARINDEX('(keyi)', Cross_Reference)) - CHARINDEX(' ', Cross_Reference, CHARINDEX('(keyi)', Cross_Reference) - 1) - 1)
+                ELSE 
+                    SUBSTRING(Cross_Reference, CHARINDEX(' ', Cross_Reference, CHARINDEX('(keyi)', Cross_Reference) - 1) + 1, LEN(Cross_Reference) - CHARINDEX(' ', Cross_Reference, CHARINDEX('(keyi)', Cross_Reference) - 1) - 1)
+            END
+        ELSE 
+            Key_Innovations
+    END;
+
+---Update columns for to help clean up all the extra decimal places
+
+UPDATE [products].[dbo].[P_R_12]
+SET 
+    Price = ROUND(Price, 2),
+    Pop_A_Lock = ROUND(Pop_A_Lock, 2),
+    Lower = ROUND(Lower, 2),
+	Lowest = ROUND(Lowest, 2),
+	Cost = ROUND(Cost, 2),
+	Wholesale = Round(Wholesale, 2),
+	Weight = Round(Weight, 2),
+	Height = Round(Height, 2),
+	_1st_vendor_cost = Round(_1st_vendor_cost,2);
+
+---Query for inventory logs for when admin id is alex and between set times and if the difference is greater than 10 
+
+
+with cte as (select
+	Admin_ID
+	,Product_ID
+	,Product_Name
+	,CAST(modified_date as date) as the_date
+	,Previous_Quantity
+	,Current_Quantity
+	,Previous_Quantity - Current_Quantity as qty_difference
+FROM 
+	[products].[dbo].[inventory_logs_csv_02-28-24])
+	select
+		*
+	from
+		cte
+	where 
+		Admin_ID = 'alex'
+	and
+		qty_difference > 10
+	and the_date between '2024-01-01' and '2024-03-01'
+
+---Difference in qty from one product report to another 
+
+with cte as (SELECT
+	a.id current_id
+	,a.model currmodel
+	,a.quantity current_qty
+	,b.id old_id
+	,b.Quantity old_qty
+FROM [products].[dbo].[PR-03-13-24] a
+  join
+	[products].[dbo].[products_data_report_03-05-24] b
+on a.ID = b.ID
+	and 
+	a.Quantity < b.Quantity
+	and 
+	a.model like '%RFB%'
+)
+select
+	current_id
+	,old_id
+	,currmodel
+	,current_qty
+	,old_qty
+	,old_qty - current_qty as difference
+from 
+	cte
+order by
+	DIFFERENCE desc;
+
+---Creating mock table
+
+create table customers (
+cust_id int identity(1,1) primary key,
+first_name varchar(50),
+last_name varchar (50),
+cust_address varchar (50),
+city varchar (50),
+state varchar (5),
+);
+
+insert into 
+	customers (first_name,last_name,cust_address,city,state)
+values 
+	('megan','trainer','23432 some ln.','las vegas','nv'),
+	('jordan','jordy','94865 brain st.','orlando','fl'),
+	('david','tatum','14722 robot blvd.','wichita','ks'),
+	('brenda','scalipari','948654 dandandan st.','los angeles','ca'),
+	('megan','pudy','364 burk ln.','oklahoma city','ok'),
+	('jenna','jackson','94885 lacienaga ln.','maui','hw'),
+	('berkley','conway','47855 beeker blvd.','los angeles','ca'),
+	('kenny','kensington','28882 somsom st.','cleveland','oh'),
+	('rico','murakami','664785 maritime st.','las vegas','nv'),
+	('guy','issame','9874 orldano blvd.','san francisco','ca'),
+	('john','francis','4423 wigwam st.','phoenix','az'),
+	('ron','burgundy','94664 sunset ln.','phoenix','az'),
+	('blaze','noirman','79846 biggie ln.','dallas','tx'),
+	('richard','kenzington','321 nonda blvd.','tyler','tx'),
+	('mike','last','2494 two toned blvd.','san antonio','tx'),
+	('eustice','blac','897987 bubbles blvd.','waikiki','hw'),
+	('kendra','burgundy','4564659 nugget st.','las vegas','nv'),
+	('laura','johnson','1103 jojo st.','wichita','ks'),
+	('jennifer','white','4456 romelade ln.','san bernadino','ca');
+
+create table products (
+prod_id int primary key,
+price decimal(10,2),
+cost decimal(10,2),
+);
+
+insert into
+	products (prod_id,price,cost)
+values
+	(1,9.90,4.50),
+	(2,18.55,16.35),
+	(3,5.50,3.50),
+	(4,12.35,9.64),
+	(5,7.20,4.20),
+	(6,12.00,5.00),
+	(7,20.99,9.99),
+	(8,15.66,7.66),
+	(9,15.50,9.64),
+	(10,55.50,9.64),
+	(11,15.50,9.64),
+	(12,29.50,4.64),
+	(13,22.50,3.64),
+	(14,16.50,6.64),
+	(15,25.50,4.64),
+	(16,15.50,3.64),
+	(17,15.50,7.64),
+	(18,15.00,2.64),
+	(19,6.50,2.30);
+
+create table orders (
+id int identity(1,1) primary key,
+cust_id int,
+Product_id int,
+product_name varchar(50),
+product_type varchar(50),
+foreign key (cust_id) references customers(cust_id),
+foreign key (product_id) references products(prod_id),
+);
+
+insert into 
+	orders (cust_id,product_id,product_name,product_type)
+values 
+	(1,1,'juicy juicy','food'),
+	(2,15,'buble album','music'),
+	(3,12,'apples dapples','food'),
+	(4,6,'cole album','music'),
+	(2,9,'buble album','music'),
+	(5,2,'tastier cakes','food'),
+	(6,12,'bubbas biscuits','food'),
+	(7,11,'adele album','music'),
+	(8,8,'tupac album','music'),
+	(9,9,'cheeseee cakes','food'),
+	(10,9,'frenchest toast','food'),
+	(11,2,'heller fried rice','food'),
+	(12,5,'fuzzy dice','accessories'),
+	(13,6,'super fuzzy dice','accessories'),
+	(14,3,'fuzziest of all dice','accessories'),
+	(12,4,'fuzzy dice','accessories'),
+	(15,16,'bacon bits','food'),
+	(15,14,'bacon bits','food'),
+	(16,1,'black eyed peas album','music'),
+	(5,2,'tastier cakes','food'),
+	(6,12,'bubbas biscuits','food'),
+	(7,11,'adele album','music'),
+	(8,8,'tupac album','music'),
+	(9,9,'cheeseee cakes','food'),
+	(10,9,'frenchest toast','food'),
+	(11,2,'heller fried rice','food'),
+	(12,5,'fuzzy dice','accessories'),
+	(13,6,'super fuzzy dice','accessories'),
+	(14,3,'fuzziest of all dice','accessories'),
+	(1,1,'juicy juicy','food'),
+	(2,15,'buble album','music'),
+	(3,12,'apples dapples','food'),
+	(4,6,'cole album','music'),
+	(2,9,'buble album','music'),
+	(5,2,'tastier cakes','food'),
+	(6,12,'bubbas biscuits','food'),
+	(7,11,'adele album','music'),
+	(6,12,'bubbas biscuits','food'),
+	(7,11,'adele album','music'),
+	(8,8,'tupac album','music'),
+	(9,9,'cheeseee cakes','food'),
+	(10,9,'frenchest toast','food'),
+	(11,2,'heller fried rice','food'),
+	(12,5,'fuzzy dice','accessories'),
+	(13,6,'super fuzzy dice','accessories'),
+	(14,3,'fuzziest of all dice','accessories'),
+	(12,4,'fuzzy dice','accessories'),
+	(15,16,'bacon bits','food'),
+	(15,14,'bacon bits','food'),
+	(16,1,'black eyed peas album','music'),
+	(5,2,'tastier cakes','food'),
+	(6,12,'bubbas biscuits','food'),
+	(7,11,'adele album','music'),
+	(8,8,'tupac album','music'),
+	(9,9,'cheeseee cakes','food'),
+	(10,9,'frenchest toast','food'),
+	(11,2,'heller fried rice','food'),
+	(12,5,'fuzzy dice','accessories'),
+	(13,6,'super fuzzy dice','accessories'),
+	(14,3,'fuzziest of all dice','accessories'),
+	(1,1,'juicy juicy','food'),
+	(2,15,'buble album','music'),
+	(3,12,'apples dapples','food'),
+	(4,6,'cole album','music'),
+	(2,9,'buble album','music'),
+	(5,2,'tastier cakes','food'),
+	(6,12,'bubbas biscuits','food'),
+	(7,11,'adele album','music');
+
+---Create a table with full names, then alter the table by making the full name into two new columns first and last name
+
+create table customers (
+cust_id int identity(1,1) primary key,
+full_name varchar(50),
+cust_address varchar (50),
+city varchar (50),
+state varchar (5),
+);
+
+insert into 
+	customers (full_name,cust_address,city,state)
+values 
+	('megan trainer','23432 some ln.','las vegas','nv'),
+	('jordan jordy','94865 brain st.','orlando','fl'),
+	('david tatum','14722 robot blvd.','wichita','ks'),
+	('brenda scalipari','948654 dandandan st.','los angeles','ca'),
+	('megan pudy','364 burk ln.','oklahoma city','ok'),
+	('jenna jackson','94885 lacienaga ln.','maui','hw'),
+	('berkley conway','47855 beeker blvd.','los angeles','ca'),
+	('kenny kensington','28882 somsom st.','cleveland','oh'),
+	('rico murakami','664785 maritime st.','las vegas','nv'),
+	('guy issame','9874 orldano blvd.','san francisco','ca'),
+	('john francis','4423 wigwam st.','phoenix','az'),
+	('ron burgundy','94664 sunset ln.','phoenix','az'),
+	('blaze noirman','79846 biggie ln.','dallas','tx'),
+	('richard kenzington','321 nonda blvd.','tyler','tx'),
+	('mike last','2494 two toned blvd.','san antonio','tx'),
+	('eustice blac','897987 bubbles blvd.','waikiki','hw'),
+	('kendra burgundy','4564659 nugget st.','las vegas','nv'),
+	('laura johnson','1103 jojo st.','wichita','ks'),
+	('jennifer white','4456 romelade ln.','san bernadino','ca');
+
+ALTER TABLE customers
+ADD FirstName NVARCHAR(255),
+    LastName NVARCHAR(255);
+
+UPDATE customers
+SET FirstName = SUBSTRING(full_name, 1, CHARINDEX(' ', full_name) - 1),
+    LastName = SUBSTRING(full_name, CHARINDEX(' ', full_name) + 1, LEN(full_name));
+
+Alter table customers
+drop column full_name;
+
+SELECT * FROM customers;
+
+---Create new table for to fix positioning of the names
+
+create table customers_2 (
+cust_id int identity(1,1) primary key,
+first_name varchar(50),
+last_name varchar (50),
+cust_address varchar (50),
+city varchar (50),
+state varchar (5),
+);
+
+
+---Difference in qty from one product report to another 
+
+with cte as (SELECT
+	a.id current_id
+	,a.model currmodel
+	,a.quantity current_qty
+	,b.id old_id
+	,b.Quantity old_qty
+FROM [products].[dbo].[PR-03-13-24] a
+  join
+	[products].[dbo].[products_data_report_03-05-24] b
+on a.ID = b.ID
+	and 
+	a.Quantity < b.Quantity
+	and 
+	a.model like '%RFB%'
+)
+select
+	current_id
+	,old_id
+	,currmodel
+	,current_qty
+	,old_qty
+	,old_qty - current_qty as difference
+from 
+	cte
+order by
+	DIFFERENCE desc;
+
+---Casing OEM products to find their Make (Honda, Ford, Etc.) 
+
+select
+	*
+from
+	[data].[dbo].[products_data_report_05-09-24]
+where
+	id like 228;
+
+alter table [data].[dbo].[products_data_report_05-09-24]
+add Make varchar(50);
+
+update [HTL Data3].[dbo].[products_data_report_06-11-24]
+set Make = 
+	case
+		when EZ like '%CHR%' then 'Chrysler'
+		when EZ like '%HON%' then 'Honda'
+		when EZ like '%FOR%' then 'Ford'
+		when EZ like '%GM%' then 'GM'
+		when EZ like '%HYU%' then 'Hyundai'
+		when EZ like '%AUD%' then 'Audi'
+		when EZ like '%VW%' then 'Volkswagen'
+		when EZ like '%LEX%' then 'Lexus'
+		when EZ like '%BMW%' then 'BMW'
+		when EZ like '%NIS%' then 'Nissan'
+		when EZ like '%TOY%' then 'Toyota'
+		when EZ like '%MAZ%' then 'Mazda'
+		when EZ like '%MIT%' then 'Mitsubishi'
+		when EZ like '%Lin%' then 'Lincoln'
+		when EZ like '%INF%' then 'Infiniti'
+		when EZ like '%SUB%' then 'Subaru'
+		when EZ like '%Bui%' then 'Buick'
+		when EZ like '%Kia%' then 'Kia'
+		when EZ like '%Dodg%' then 'Dodge'
+		when EZ like '%Acu%' then 'Acura'
+		when EZ like '%Jee%' then 'Jeep'
+		when EZ like '%Cadi%' then 'Cadillac'
+		when EZ like '%CHEV%' then 'Chevrolet'
+		when EZ like '%Ram%' then 'Ram'
+		when EZ like '%Gene%' then 'Genesis'
+		when EZ like '%Fiat%' then 'Fiat'
+		when EZ like '%Alfa%' then 'Alfa Romeo'
+		when EZ like '%Suzu%' then 'Suzuki'
+		when EZ like '%Scio%' then 'Scion'
+		when model like '%CHR%' then 'Chrysler'
+		when model like '%HON%' then 'Honda'
+		when model like '%FOR%' then 'Ford'
+		when model like '%GM%' then 'GM'
+		when model like '%HYU%' then 'Hyundai'
+		when model like '%AUD%' then 'Audi'
+		when model like '%VW%' then 'Volkswagen'
+		when model like '%LEX%' then 'Lexus'
+		when model like '%BMW%' then 'BMW'
+		when model like '%NIS%' then 'Nissan'
+		when model like '%TOY%' then 'Toyota'
+		when model like '%MAZ%' then 'Mazda'
+		when model like '%MIT%' then 'Mitsubishi'
+		when model like '%Lin%' then 'Lincoln'
+		when model like '%INF%' then 'Infiniti'
+		when model like '%SUB%' then 'Subaru'
+		when model like '%Bui%' then 'Buick'
+		when model like '%Kia%' then 'Kia'
+		when model like '%Dodg%' then 'Dodge'
+		when model like '%Acu%' then 'Acura'
+		when model like '%Jee%' then 'Jeep'
+		when model like '%Cadi%' then 'Cadillac'
+		when model like '%CHEV%' then 'Chevrolet'
+		when model like '%Ram%' then 'Ram'
+		when model like '%Gene%' then 'Genesis'
+		when model like '%Fiat%' then 'Fiat'
+		when model like '%Alfa%' then 'Alfa Romeo'
+		when model like '%Suzu%' then 'Suzuki'
+		when model like '%Scio%' then 'Scion'
+		when ez like '%mercedes%' then 'Mercedes'
+		when model like '%DOD-%' then 'Dodge'
+		when model like '%CAD%' then 'Cadillac'
+		when model like '%SUZ%' then 'Suzuki'
+		else 'OTHER'
+	end;
+
+---Query for merging tables and getting profit and actual sales
+
+WITH cte AS (
+    SELECT * FROM [dbo].[Jan$]
+    UNION ALL
+    SELECT * FROM [dbo].[Feb$]
+    UNION ALL
+    SELECT * FROM [dbo].[Mar$]
+    UNION ALL
+    SELECT * FROM [dbo].[Apr$]
+)
+SELECT
+    c.[Product id],
+    SUM(CONVERT(float, c.short)) AS short_total,
+    COUNT(c.[Product id]) AS product_count,
+	sum(c.[QTY NEEDED]) as total_needed,
+	round(SUM(p.cost),2) as cost,
+	round(SUM(p.price),2) as price,
+	round(SUM(p.price) - SUM(p.cost),2) as profit,
+	round(SUM(c.Short) * sum(p.Price),2) as missed_sales,
+	round(SUM(c.Good) * sum(p.Price),2) as actual_sales,
+	p.Make,
+    p.ez
+FROM
+    cte c
+LEFT JOIN
+    [products_data_report_05-09-24] p ON c.[Product ID] = p.id
+GROUP BY    
+    c.[Product id], p.id, p.ez,p.Make
+ORDER BY
+    short_total DESC;
