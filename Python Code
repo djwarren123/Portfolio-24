@@ -1,0 +1,177 @@
+#Program to scrape website for Title, Prices, and SKUS
+
+import os
+import openpyxl
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+
+# URL of the website
+url = "https://www.uhs-hardware.com/pages/search-results-page?q={query}"
+
+# List of search terms
+queries = ["HYQ12BBY",
+"GQ43VT20T",
+"GQ43VT20T",
+"89070-02270",
+"89070-02620",
+"89070-02640",
+"89070-02880",
+"89070-02A50",
+"89070-06231",
+"89070-06231",
+"89070-06420",
+"89070-06420",
+"89070-06421",
+"89070-06421",
+"89070-06790",
+"89070-0R100",
+"89070-0R120",
+"89070-0T030",
+"89070-12590",
+"89070-12590",
+"89070-12590",
+"89070-12C20",
+"89070-35140",
+"89070-35170",
+"89070-35170",
+"89070-42660",
+"89070-42670",
+"89070-42820",
+"89070-42830",
+"89070-52850",
+"89070-52F60",
+"89070-52G50",
+"89070-60090",
+"89070-60750",
+"RLVT0B405-326-A1",
+"HYQ12BBY"
+]
+
+# Initialize Chrome WebDriver (Make sure you have ChromeDriver installed and in PATH)
+driver = webdriver.Chrome()
+
+# Define the path to your desktop
+desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop')
+
+# Create a new Excel workbook
+workbook = Workbook()
+
+# Select the active worksheet
+worksheet = workbook.active
+
+# Set the header row
+worksheet.append(["Query", "Card Title", "Price", "SKU", "Link"])
+
+try:
+    for query in queries:
+        # Construct the full URL for the current query
+        full_url = url.format(query=query)
+
+        # Open the webpage for the current query
+        driver.get(full_url)
+
+        try:
+            # Wait for the products grid to be present
+            products_grid = WebDriverWait(driver, 1).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "snize-search-results"))
+            )
+
+            # Find all product elements in the grid
+            product_elements = products_grid.find_elements(By.CLASS_NAME, "snize-product")
+
+            for product_element in product_elements:
+                try:
+                    # Extract the text from the title element
+                    card_title_element = product_element.find_element(By.CLASS_NAME, "snize-title")
+                    card_title = card_title_element.text.strip()
+
+                    # Find the price element
+                    price_element = product_element.find_element(By.CLASS_NAME, "snize-price")
+                    price = price_element.text.strip()
+
+                    # Find the SKU element (Assuming it's in a 'snize-sku' class, change if needed)
+                    sku_element = product_element.find_element(By.CLASS_NAME, "snize-sku")
+                    sku = sku_element.text.strip()
+
+                    # Get the product link
+                    link_element = product_element.find_element(By.TAG_NAME, "a")
+                    product_link = link_element.get_attribute("href")
+
+                    # Append the data to the Excel sheet
+                    worksheet.append([query, card_title, price, sku, product_link])
+
+                except Exception as e:
+                    print(f"Error extracting data for a product: {e}")
+
+        except Exception as e:
+            print(f"Error loading page for query {query}: {e}")
+
+finally:
+    # Close the WebDriver
+    driver.quit()
+
+    # Add hyperlinks to the price cells
+    for row in range(2, worksheet.max_row + 1):  # Start from row 2 (excluding header)
+        price_cell = worksheet.cell(row=row, column=3)  # Column C (Price column)
+        link_cell = worksheet.cell(row=row, column=5)  # Column E (Link column)
+        price_cell_hyperlink = '=HYPERLINK("{}","{}")'.format(link_cell.value, price_cell.value)
+        price_cell.value = price_cell_hyperlink
+
+    # Save the Excel workbook to the desktop
+    desktop_file_path = os.path.join(desktop_path, "C:\\Users\\ameri\\OneDrive\\Desktop\\search_results.xlsx")
+    workbook.save(desktop_file_path)
+
+    print(f"Excel workbook saved to {desktop_file_path}")
+
+#Program to create a weekly refurbishment report
+
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, PatternFill
+from datetime import datetime
+import os
+
+# Load the CSV file
+csv_path = "C:\\Users\\ameri\\Downloads\\products_data_report_11-15-24.csv"  # replace with the actual path to your CSV
+df = pd.read_csv(csv_path)
+
+# Add the 'Refurbs' column after column 'R' (index 17)
+df.insert(18, 'Refurbs', df[["White Bin Qty  ","Refurbs Overstock Qty","Refurbs Overstock Qty Needs Unlock"]].sum(axis=1))  # Adjust column letters as needed
+
+# Save as an Excel file (temporarily)
+excel_path = 'temp.xlsx'
+df.to_excel(excel_path, index=False)
+
+# Load the Excel file to apply formatting
+wb = load_workbook(excel_path)
+ws = wb.active
+
+# Center-align and color the 'Refurbs' column (column S, index 18 in Excel)
+refurbs_column = ws['S']
+for cell in refurbs_column[1:]:  # Skip the header
+    cell.alignment = Alignment(horizontal='center')
+    cell.fill = PatternFill(start_color="00FF00", end_color="00FF00", fill_type="solid")
+
+# Hide columns P, Q, and R
+ws.column_dimensions['P'].hidden = True
+ws.column_dimensions['Q'].hidden = True
+ws.column_dimensions['R'].hidden = True
+
+# Create the final path with the date
+today = datetime.now().strftime("%m-%d-%Y")
+desktop_path = os.path.join(os.path.expanduser("~"), "Downloads", f"Refurbs-Report-{today}.xlsx")
+
+# Save the formatted file to the desktop with the date in the filename
+wb.save(desktop_path)
+
+# Cleanup temporary file
+os.remove(excel_path)
+
+print(f"File saved as: {desktop_path}")
+
+
+
